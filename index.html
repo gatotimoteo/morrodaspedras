@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diário Morro das Pedras</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/page-flip/dist/js/page-flip.browser.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+
+    <style>
+        /* Estilo Visual */
+        body {
+            margin: 0; padding: 0;
+            background-color: #2c2c2c; /* Fundo escuro */
+            font-family: sans-serif;
+            display: flex; justify-content: center; align-items: center;
+            height: 100vh; overflow: hidden; color: white;
+            flex-direction: column;
+        }
+
+        .screen-container {
+            text-align: center; z-index: 100;
+            background: rgba(0,0,0,0.85);
+            padding: 40px; border-radius: 12px;
+            max-width: 400px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+        
+        h2 { margin-top: 0; color: #ffd700; } /* Dourado */
+
+        button {
+            background-color: #4285F4; color: white;
+            border: none; padding: 12px 25px;
+            font-size: 16px; border-radius: 6px; cursor: pointer; margin-top: 15px;
+            transition: 0.3s;
+        }
+        button:hover { background-color: #357ae8; transform: scale(1.05); }
+        
+        /* O Livro */
+        .flip-book { display: none; box-shadow: 0 0 30px rgba(0,0,0,0.7); }
+        .page { background-color: #fdfaf7; border-right: 1px solid #ddd; overflow: hidden; }
+        .page img { width: 100%; height: 100%; object-fit: contain; }
+        
+        /* Botão Sair Principal */
+        #btn-logout-main {
+            position: absolute; top: 20px; right: 20px;
+            background: rgba(255,255,255,0.1); border: 1px solid white;
+            display: none; cursor: pointer; color: white; padding: 5px 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="login-screen" class="screen-container">
+        <h2>🔐 Diário Confidencial</h2>
+        <p>Este conteúdo é privado.</p>
+        <p>Faça login para solicitar acesso.</p>
+        <button id="btn-login">Entrar com Google</button>
+    </div>
+
+    <div id="pending-screen" class="screen-container" style="display: none;">
+        <h2>⏳ Acesso em Análise</h2>
+        <p>Olá, <strong id="user-name-display" style="color:#ffcc00"></strong>.</p>
+        <p>O teu pedido foi registado.</p>
+        <p>Por favor, avisa o proprietário do diário para liberar o teu e-mail: <br><em id="user-email-display"></em></p>
+        <p style="font-size: 0.9em; color: #ccc;">Depois de avisar, recarrega a página.</p>
+        <button onclick="fazerLogout()" style="background:#555">Sair / Tentar outra conta</button>
+    </div>
+
+    <div id="blocked-screen" class="screen-container" style="display: none;">
+        <h2>🚫 Acesso Negado</h2>
+        <button onclick="fazerLogout()">Sair</button>
+    </div>
+
+    <button id="btn-logout-main" onclick="fazerLogout()">Sair</button>
+
+    <div id="book" class="flip-book">
+        <div class="page"><img src="imagens/1.jpg" loading="lazy"></div>
+        <div class="page"><img src="imagens/2.jpg" loading="lazy"></div>
+        <div class="page"><img src="imagens/3.jpg" loading="lazy"></div>
+        <div class="page"><img src="imagens/4.jpg" loading="lazy"></div>
+        <div class="page"><img src="imagens/5.jpg" loading="lazy"></div>
+        </div>
+
+    <script>
+        // --- CONFIGURAÇÃO JÁ PREENCHIDA ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyB-musBHXYPTBMt8VK1-Y-JGHlhZotihhY",
+            authDomain: "diarioseguro-5d091.firebaseapp.com",
+            projectId: "diarioseguro-5d091",
+            storageBucket: "diarioseguro-5d091.firebasestorage.app",
+            messagingSenderId: "454780146306",
+            appId: "1:454780146306:web:a52ff824e85e996b6cda9b"
+        };
+        // -----------------------------------------------------------
+
+        // Inicialização
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const provider = new firebase.auth.GoogleAuthProvider();
+
+        // Elementos da Tela
+        const screens = {
+            login: document.getElementById('login-screen'),
+            pending: document.getElementById('pending-screen'),
+            blocked: document.getElementById('blocked-screen'),
+            book: document.getElementById('book'),
+            logoutMain: document.getElementById('btn-logout-main')
+        };
+        let pageFlip; // Variável do livro
+
+        // --- FUNÇÕES PRINCIPAIS ---
+
+        // 1. Botão de Login
+        document.getElementById('btn-login').addEventListener('click', () => {
+            auth.signInWithPopup(provider).catch(err => alert("Erro: " + err.message));
+        });
+
+        // 2. Função de Logout
+        window.fazerLogout = function() {
+            auth.signOut().then(() => location.reload());
+        }
+
+        // 3. Cérebro da Segurança (Monitora quem entra)
+        auth.onAuthStateChanged(async (user) => {
+            // Esconde tudo primeiro
+            Object.values(screens).forEach(el => el.style.display = 'none');
+
+            if (user) {
+                console.log("Usuário detectado:", user.email);
+                
+                // Vai ao banco verificar o status
+                const userRef = db.collection('usuarios').doc(user.email);
+                
+                try {
+                    const doc = await userRef.get();
+
+                    if (doc.exists) {
+                        const dados = doc.data();
+                        
+                        if (dados.status === 'aprovado') {
+                            // SUCESSO! MOSTRA O LIVRO
+                            carregarLivro();
+                        } else if (dados.status === 'bloqueado') {
+                            screens.blocked.style.display = 'block';
+                        } else {
+                            // Existe mas ainda é pendente
+                            mostrarTelaPendente(user);
+                        }
+                    } else {
+                        // PRIMEIRA VEZ (Não existe no banco)
+                        // Cria o registro como pendente automaticamente
+                        await userRef.set({
+                            nome: user.displayName,
+                            email: user.email,
+                            status: 'pendente', // O segredo está aqui
+                            data: new Date()
+                        });
+                        mostrarTelaPendente(user);
+                    }
+                } catch (err) {
+                    console.error(err);
+                    alert("Erro ao conectar com o banco de dados. Verifique sua conexão.");
+                }
+            } else {
+                // Ninguém logado -> Tela de Login
+                screens.login.style.display = 'block';
+            }
+        });
+
+        // Auxiliar: Mostra a sala de espera
+        function mostrarTelaPendente(user) {
+            document.getElementById('user-name-display').innerText = user.displayName;
+            document.getElementById('user-email-display').innerText = user.email;
+            screens.pending.style.display = 'block';
+        }
+
+        // Auxiliar: Inicia o Flipbook
+        function carregarLivro() {
+            screens.book.style.display = 'block';
+            screens.logoutMain.style.display = 'block';
+
+            if (!pageFlip) {
+                pageFlip = new St.PageFlip(document.getElementById('book'), {
+                    width: 400, // Largura de CADA página
+                    height: 600, // Altura de CADA página
+                    size: 'stretch',
+                    minWidth: 300,
+                    maxWidth: 800,
+                    minHeight: 400,
+                    maxHeight: 1000,
+                    showCover: true
+                });
+                pageFlip.loadFromHTML(document.querySelectorAll('.page'));
+            }
+        }
+    </script>
+</body>
+</html>
